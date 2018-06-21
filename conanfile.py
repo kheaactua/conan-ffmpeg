@@ -1,10 +1,12 @@
 #!/usr/bin/env python
+# -*- coding: future_fstrings -*-
 # -*- coding: utf-8 -*-
 
 from conans import ConanFile, AutoToolsBuildEnvironment, tools
 import os
 import glob
 import shutil
+import re
 
 
 class FFMpegConan(ConanFile):
@@ -81,6 +83,8 @@ class FFMpegConan(ConanFile):
                        "vda=False",
                        "securetransport=True",
                        "qsv=True")
+
+    requires = 'helpers/[>=0.3]@ntc/stable'
 
     @property
     def is_mingw(self):
@@ -322,6 +326,10 @@ class FFMpegConan(ConanFile):
                 env_build.make(args=['install'])
 
     def package(self):
+        with tools.chdir('sources'):
+            env_build = AutoToolsBuildEnvironment(self, win_bash=self.is_mingw or self.is_msvc)
+            env_build.make(args=['install'])
+
         with tools.chdir("sources"):
             self.copy(pattern="LICENSE")
         if self.settings.compiler == 'Visual Studio' and not self.options.shared:
@@ -330,6 +338,8 @@ class FFMpegConan(ConanFile):
                 libs = glob.glob('*.a')
                 for lib in libs:
                     shutil.move(lib, lib[:-2] + '.lib')
+
+        self._fixPkgConfig()
 
     def package_info(self):
         libs = ['avdevice', 'avfilter', 'avformat', 'avcodec', 'swresample', 'swscale', 'avutil']
@@ -378,3 +388,38 @@ class FFMpegConan(ConanFile):
                 self.cpp_info.libs.extend(['xcb', 'xcb-shm', 'xcb-shape', 'xcb-xfixes'])
         elif self.settings.os == "Windows":
             self.cpp_info.libs.extend(['ws2_32', 'secur32', 'shlwapi', 'strmiids', 'vfw32'])
+
+        # Populate the pkg-config environment variables
+        with tools.pythonpath(self):
+            from platform_helpers import adjustPath, appendPkgConfigPath
+
+            pkg_config_path = os.path.join(self.package_folder, 'lib', 'pkgconfig')
+            appendPkgConfigPath(adjustPath(pkg_config_path), self.env_info)
+
+            pc_files = glob.glob(adjustPath(os.path.join(pkg_config_path, '*.pc')))
+            for f in pc_files:
+                p_name = re.sub(r'\.pc$', '', os.path.basename(f))
+                p_name = re.sub(r'\W', '_', p_name.upper())
+                setattr(self.env_info, f'PKG_CONFIG_{p_name}_PREFIX', adjustPath(self.package_folder))
+
+            appendPkgConfigPath(adjustPath(pkg_config_path), self.env_info)
+
+    def _fixPkgConfig(self):
+        """ Replace variables based on a prefix with a prefix.  Right now ffmpeg pkg-config variables use pull paths """
+
+        from platform_helpers import adjustPath
+        self.output.info('Modifying pkg-config variables (libdir, includedir, ..) to start with ${prefix}')
+
+        pkg_config_path = os.path.join(self.package_folder, 'lib', 'pkgconfig')
+        pc_files = glob.glob(adjustPath(os.path.join(pkg_config_path, '*.pc')))
+        for pc_file_name in pc_files:
+            with open(pc_file_name) as f: data = f.read()
+            m = re.search('prefix=(?P<prefix>.*)', data)
+            if m:
+                print("Found prefix: '%s'"%m.group('prefix'))
+                data = data.replace('prefix=%s'%m.group('prefix'), 'PREFIX_LINE')
+                data = data.replace(m.group('prefix'), '${prefix}')
+                data = data.replace('PREFIX_LINE', 'prefix=%s'%m.group('prefix'))
+                with open(pc_file_name, 'w') as f: f.write(data)
+
+# vim: ts=4 sw=4 expandtab ffs=unix ft=python foldmethod=marker :

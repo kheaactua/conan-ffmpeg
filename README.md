@@ -1,3 +1,6 @@
+# Difference between this recipe and main conan-ffmpeg recipe
+
+This recipe tweaks the pkg-config files and loads them into the environment in `package_info`
 ## Package Status
 
 | Bintray | Windows | Linux & macOS | 
