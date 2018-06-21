@@ -323,7 +323,6 @@ class FFMpegConan(ConanFile):
                 # --host, --build, --target
                 env_build.configure(args=args, build=False, host=False, target=False)
                 env_build.make()
-                env_build.make(args=['install'])
 
     def package(self):
         with tools.chdir('sources'):
@@ -340,6 +339,7 @@ class FFMpegConan(ConanFile):
                     shutil.move(lib, lib[:-2] + '.lib')
 
         self._fixPkgConfig()
+        self._symlink_include_dirs()
 
     def package_info(self):
         libs = ['avdevice', 'avfilter', 'avformat', 'avcodec', 'swresample', 'swscale', 'avutil']
@@ -416,10 +416,29 @@ class FFMpegConan(ConanFile):
             with open(pc_file_name) as f: data = f.read()
             m = re.search('prefix=(?P<prefix>.*)', data)
             if m:
-                print("Found prefix: '%s'"%m.group('prefix'))
                 data = data.replace('prefix=%s'%m.group('prefix'), 'PREFIX_LINE')
                 data = data.replace(m.group('prefix'), '${prefix}')
                 data = data.replace('PREFIX_LINE', 'prefix=%s'%m.group('prefix'))
                 with open(pc_file_name, 'w') as f: f.write(data)
+
+    def _symlink_include_dirs(self):
+        """
+        VLC looks for <lib>, but this outputs the include directories as
+        lib<lib>, so adding symlinks to compensate
+        """
+
+        from platform_helpers import adjustPath
+        base = os.path.join(self.package_folder, 'include')
+        with tools.chdir(base):
+            dirnames = glob.glob('*')
+            for dirname in dirnames:
+                if os.path.isdir(dirname) and not os.path.islink(dirname):
+                    m = re.match('lib(.*)', dirname)
+                    link   = m.group(1)
+
+                    self.output.info(f'Can I create symlink {link} -> {dirname}')
+                    if not os.path.exists(link):
+                        self.output.info(f'Creating symlink {link} -> {dirname}')
+                        os.symlink(dirname, link)
 
 # vim: ts=4 sw=4 expandtab ffs=unix ft=python foldmethod=marker :
